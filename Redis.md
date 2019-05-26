@@ -82,7 +82,28 @@ key = "shortMsg:limit:" + phoneNum;
 ```
 
 ### Bitmaps
+Bitmap是基于string实现的，可以把Bitmap想象成一个以位为单位的数组，数组的下标在Bitmap里叫偏移量
+
+#### 命令
+- setbit
+- getbit
+- bitcount
+- bitop
+	- and
+	- or
+	- not
+	- xor
+- bitpos
+
 ### HyperLogLog
+HyperLogLog是一种基数算法，可以用很少的内存完成独立总数统计。
+
+命令：
+- pfadd
+- pfcount
+- pfmerge
+
+HyperLogLog算法存在误差，Redis给出的数据是0.81%的误差
 
 ## 哈希 hash
 ### 命令
@@ -247,19 +268,99 @@ spop/srandmember = Random item
 	- sscan
 	- zscan
 ## 键过期功能
-[expire](https://redis.io/commands/expire)/pexpire/pexpireat可以对一个键设置过期时间，当超过过期时间后，会自动删除这个键
-persist清除键的过期时间
-需要注意的是，set命令也会清除过期时间
-setex可以修改数据的同时设置过期时间
-[ttl](https://redis.io/commands/ttl)用于查询一个键的剩余时间，-1表示未设置过期时间，-2表示键不存在
+- [expire](https://redis.io/commands/expire)/pexpire/pexpireat可以对一个键设置过期时间，当超过过期时间后，会自动删除这个键
+- persist清除键的过期时间
+- 需要注意的是，set命令也会清除过期时间
+- setex可以修改数据的同时设置过期时间
+- [ttl](https://redis.io/commands/ttl)用于查询一个键的剩余时间，-1表示未设置过期时间，-2表示键不存在
+
+## 慢查询分析
+- 慢查询统计的是命令执行的时间
+- 配置
+	- slowlog-log-slower-than设置慢操作阈值，默认10000微秒
+	- slowlog-max-len是慢日志的长度（条数）
+- 命令
+	- slowlog get
+	- slowlog len
+	- slowlog reset
+- 结构
+	- ID
+	- time
+	- duration
+	- command+arguments
+### 作用
+可以基于这个机制实现监控功能
+
+## Redis Shell
+### redis-cli
+- -r 表示执行命令多次
+- -i 表示命令执行间隔
+- -x 表示从stdin读取数据作为最后一个参数
+- -c 是连cluster节点时的选项
+- -a 提供密码
+- --rdb 请求redis实例生成并发送RDB文件
+- --bigkeys 使用scan命令进行采样，找到内存占用比较大的键值
+- --eval用于执行指定Lua脚本
+- --latency/latency-history/latency-list可以检测网络延迟
+- --stat实时获取统计信息
+- --no-raw/raw，返回的是否是二进制格式
+
+### redis-benchmark
+- -c 并发（默认50）
+- -n 客户端请求总量（默认100000）
+- -q 只显示request per seconde
+- -r 生成更多的随机键
+- -P 表示每个请求pipeline的数据量（默认1）
+- -k 是否使用keepalive
+- -t 对指定命令进行测试
+- --csv 以csv格式输出结果
+
+
+## Pipeline
+RTT（Round Trip Time）往返时间，是发送命令和接收结果在网络上传输的时间。
+
+有些命令带批量模式，可以整体上节约RTT，但是大部分的命令是不带批量模式的，于是有了Pipeline。Pipeline把多条指令一次性传输给Redis，然后把返回结果按顺序返回给客户端，只需要一次RTT。
+
+注意：Pipeline过大，反而会导致请求过大或者返回过大，导致等待时间过长。
+
+## 事务与Lua
+### 事务
+- multi
+- exec
+- discard
+
+Redis的事务不支持回滚，命令执行错误不会影响事务的执行。
+### Lua
+- eval
+- evalsha
+- script load
+- script exists
+- script flush
+- script kill
+
+Redis-cli —eval xxx.lua aa bb可以测试脚本
 
 ## 发布订阅功能
+命令：
+- publish
+- subscribe
+- psubscribe - 按模式匹配订阅
+- unsubscribe
+- punsubscrib
+- pubsub channels
+- pubsub numsub
 
-## Lua脚本功能
+不支持历史功能
 
-## 简单的事务功能
-
-## 流水线功能
+## GEO
+命令：
+- geoadd
+- geopos
+- geodist
+- georadius
+- georadiusbymember
+- geohash
+- zrem - 删除成员，因为底层是使用set实现的
 
 ## 持久化
 ### AOF
