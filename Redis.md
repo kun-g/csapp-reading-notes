@@ -251,8 +251,6 @@ spop/srandmember = Random item
 
 ## Stream (\>5.0)
 
-## Geo（\>3.2)
-
 # 功能
 ## 键管理
 - 重命名：rename/renamenx
@@ -361,11 +359,96 @@ Redis-cli —eval xxx.lua aa bb可以测试脚本
 - georadiusbymember
 - geohash
 - zrem - 删除成员，因为底层是使用set实现的
+## 客户端管理
+### client list
+Client list命令可以列出与Redis服务端相连的所有客户端连接信息，包含以下字段：
+- id：唯一标识，Redis启动后从0开始，自增
+- addr：ip和端口
+- fd：socket的文件描述符，如果是-1就标识是Redis内部伪装的客户端
+- name：名字，可以通过client setName和client getName操作
+- age：连接的存活时间，单位是秒
+- idle：连接的闲置时间，单位是秒
+- flags：
+	- A: connection to be closed ASAP
+	- b: the client is waiting in a blocking operation
+	- c: connection to be closed after writing entire reply
+	- d: a watched keys has been modified - EXEC will fail
+	- i: the client is waiting for a VM I/O (deprecated)
+	- M: the client is a master
+	- N: no specific flag set
+	- O: the client is a client in MONITOR mode
+	- P: the client is a Pub/Sub subscriber
+	- r: the client is in readonly mode against a cluster node
+	- S: the client is a replica node connection to this instance
+	- u: the client is unblocked
+	- U: the client is connected via a Unix domain socket
+	- x: the client is in a MULTI/EXEC context
+- db：当前的db
+- psub：模式匹配的订阅数量
+- multi：事务命令数量
+- qbuf：客户端的输入缓冲区总容量，不能超过1G，超过的话会被关闭
+- qbuf-free：客户端的输入缓冲区剩余容量
+- obl：输出缓冲区长度
+- oll：输出列表长度，排队的返回值会存在这里
+- omem：输出缓冲区内存占用
+- events：文件描述符事件
+	- r: the client socket is readable (event loop)
+	- w: the client socket is writable (event loop)
+- cmd：最后一次执行的命令
+
+这里的qbuf、qbuf-free、obl、oll、omem都是需要监控的对象
+
+输出缓冲区可以使用client-output-buffer-limit配置来控制，输出缓冲区分普通客户端、发布订阅客户端、slave客户端
+
+内存的占用也要监控，如果内存抖动频繁，可能是输出缓冲区过大导致的
+
+配置中的格式：
+client-output-buffer-limit \<class\> \<hard limit\> \<soft limit\> \<soft seconds\>
+- class
+	- normal
+	- slave
+	- pubsub
+- hard limit 缓冲区大小超过这个值，client会被关闭
+- 缓冲区大小超过soft limit持续soft seconds，client也会被关闭
 
 ## 持久化
 ### AOF
+- Append Only File
+- 记录Redis操作命令，重启时重新执行命令
+- 文件同步
+	- always 同步写入磁盘
+	- everysec 异步，每秒同步磁盘一次
+	- no 由系统同步磁盘
+#### AOF重写流程
+![](Screen%20Capture%20May%2027,%202019%20at%2022.22.22.jpg)
 ### RDB
+- 当前进程数据的快照
+- 优点
+	- 紧凑，体积小
+	- 加载比AOF快
+- 缺点
+	- 无法做到实时持久化/秒级持久化
+	- 存在不同版本间格式不兼容的问题
+- 触发方式
+	- 手动触发：save/bgsave
+	- 自动触发
+		- 配置 save m n，m秒内n次修改时，触发bgsave
+		- 主从节点全量复制，也会触发bgsave
+		- shutdown命令会触发bgsave
+		- debug reload会触发save
+#### bgsave流程
+![](Screen%20Capture%20May%2027,%202019%20at%2022.22.22-1.jpg)
 
+### 重启加载流程
+![](Redis%E9%87%8D%E5%90%AF%E5%8A%A0%E8%BD%BD%E6%B5%81%E7%A8%8B.jpg)
+### 相关问题
+#### fork操作耗时
+- 内存量越大，fork操作越耗时
+- 使用虚拟化技术也会导致fork操作时间变长
+- info stats中latest-fork-usec是最近一次fork操作的耗时，单位微妙
+#### 多实例部署
+- 同时写磁盘会导致效率下降
+- 可以通过监控Redis运行状态，外部执行存档操作
 ## 复制功能
 
 ## Redis Sentinel
