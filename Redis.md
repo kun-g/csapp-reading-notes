@@ -579,6 +579,143 @@ client-output-buffer-limit \<class\> \<hard limit\> \<soft limit\> \<soft second
 当然，如果无法将查询请求平均切分，或者切分之后的QPS还是非常的高，那就只能使用读写分离了。
 
 ## Redis Sentinel
+哨兵由哨兵结点、主数据结点、从数据结点、客户端结点组成，其中哨兵结点也分主从，会通过选举选出主哨兵结点。
+哨兵结点负责：
+- 监控各个数据结点状态
+- 通知各个客户端数据结点的状态变化
+- Failover，主节点挂掉之后，哨兵会把从节点提升为主节点
+- 哨兵还会根据实际情况，更新redis的配置
+
+### 部署
+Sentinel结点要设置奇数个，因为需要投票确认主结点，奇数不会平票。
+集群里一定要有主从结构
+
+redis-sentinel redis-sentinel.conf
+
+### 配置
+#### sentinel monitor
+```bash
+sentinel monitor <master-name> <ip> <port> <quorum>
+```
+配置一个叫master-name的主节点，工作在ip和端口port，quorum是判断不可达时需要的票数
+
+#### sentinel down-after-milliseconds
+```bash
+sentinel down-after-milliseconds <master-name> <times>
+```
+每个Sentinel结点都会发ping来判断Redis数据结点是否可达，如果超过times毫秒就判断不可达。
+
+#### sentinel parallel-syncs
+```bash
+sentinel parallel-syncs <master-name> <nums>
+```
+发生故障转移时，同时发起复制操作的从节点数。
+
+#### sentinel failover-timeout
+```bash
+sentinel failover-timeout <master-name> <times>
+```
+故障转移超时时间，作用于多个环节：
+- 选出合适从节点
+- 把选中的从节点升级为主节点 \<-
+- 命令其它从节点复制新的主节点 \<-
+- 等待原主节点恢复后命令他去复制新的主节点
+
+#### sentinel auth-pass
+```bash
+sentinel auth-pass <master-name> <password>
+```
+设置主节点的访问密码
+
+#### sentinel notification-script
+```bash
+sentinel notification-script <master-name> <script-path>
+```
+当发生一些事件时，触发指定的脚本，会发送响应的事件参数
+
+#### sentinel client-reconfig-script
+```bash
+sentinel client-reconfig-script <master-name> <script-path>
+```
+故障转移结束后，触发指定的脚本，参数如下：
+```bash
+<master-name> <role> <state> <from-ip> <from-port> <to-ip> <to-port>
+```
+- master-name： 主节点名
+- role： Sentinel的角色，leader和observer
+- from-ip： 原主节点的ip
+- from-port： 原主节点的端口
+- to-ip： 新主节点的ip
+- to-port： 新主节点的端口
+
+有关sentinel notification-script和sentinel client-reconfig-script有几点需要注意: 
+- \<script-path\>必须有可执行权限。
+- \<script-path\>开头必须包含shell脚本头(例如#!/bin/sh)
+- Redis规定脚本的最大执行时间不能超过60秒,超过后脚本将被杀掉。
+- 如果shell脚本以exit 1结束,那么脚本稍后重试执行。如果以exit 2或者更高的值结束,那么脚本不会重试。正常返回值是exit 0。
+- 如果需要运维的Redis Sentinel比较多,建议不要使用这种脚本的形式来进行通知,这样会增加部署的成本。
+
+### 命令
+#### sentinel masters
+展示监控的主节点的状态和统计信息
+
+#### sentinel master\<master name\> 
+展示指定\<master name\>的主节点状态以及相关的统计信息
+
+#### sentinel slaves\<master name\> 
+展示指定\<master name\>的从节点状态以及相关的统计信息
+
+#### sentinel sentinels\<master name\>
+展示指定\<master name\>的Sentinel节点集合
+
+#### sentinel get-master-addr-by-name\<master name\>
+返回指定\<master name\>主节点的IP地址和端口
+
+#### sentinel reset\<pattern\>
+当前Sentinel节点对符合\<pattern\>(通配符风格)主节点的配置进行重置,包含清除主节点的相关状态(例如故障转移),重新发现从节点和Sentinel节点。
+
+#### sentinel failover\<master name\>
+对指定\<master name\>主节点进行强制故障转移(没有和其他Sentinel节点“协商”),当故障转移完成后,其他Sentinel节点按照故障转移的结果更新自身配置
+
+#### sentinel ckquorum\<master name\> 
+检测当前可达的Sentinel节点总数是否达到\<quorum\>的个数。
+
+#### sentinel flushconfig
+将Sentinel节点的配置强制刷到磁盘上,这个命令Sentinel节点自身用得比较多,对于开发和运维人员只有当外部原因(例如磁盘损坏)造成配置文件损坏或者丢失时,这个命令是很有用的。
+
+#### sentinel remove\<master name\> 
+取消当前Sentinel节点对于指定\<master name\>主节点的监控。
+
+#### sentinel monitor\<master name\>\<ip\>\<port\>\<quorum\> 
+这个命令和配置文件中的含义是完全一样的,只不过是通过命令的形式来完成Sentinel节点对主节点的监控。
+
+#### sentinel set\<master name\> 
+动态修改Sentinel节点配置选项
+
+#### sentinel is-master-down-by-addr
+Sentinel节点之间用来交换对主节点是否下线的判断,根据参数的不同,还可以作为Sentinel领导者选举的通信方式
+
+### 三个定时任务
+- 定时向主从节点发送info指令，获取拓扑结构
+- 定时向`__sentinel__:hello`发送对于主节点的判断和自己的信息
+- 定时向其他节点发送ping，判断存活状态
+
+### 主观下线和客观下线
+当ping的指令没有再down-after-millisenconds毫秒内回复，则判断该节点为主观下线
+当主Sentinel判定一个节点主观下线时，会通过sentinel is-master-down-by-addr向其它Sentinel节点询问对该主节点的判断，当超过quorum个时，就会判断该节点是客观下线
+
+### 选举
+[Raft](https://raft.github.io/)
+
+### 故障转移
+1. 在从节点列表中选出一个节点作为新的主节点,选择方法如下: 
+	- 过滤:“不健康”(主观下线、断线)、5秒内没有回复过Sentinel节点ping响应、与主节点失联超过down-after-milliseconds*10秒。
+	- 选择slave-priority(从节点优先级)最高的从节点列表,如果存在则返回,不存在则继续。
+	- 选择复制偏移量最大的从节点(复制的最完整),如果存在则返回,不存在则继续。
+	- 选择runid最小的从节点。
+2. Sentinel领导者节点会对第一步选出来的从节点执行slaveof no one命令让其成为主节点。
+3. Sentinel领导者节点会向剩余的从节点发送命令,让它们成为新主节点的从节点,复制规则和parallel-syncs参数有关。
+4. Sentinel节点集合会将原来的主节点更新为从节点,并保持着对其关注,当其恢复后命令它去复制新的主节点。
 
 ## Redis Cluster
 
